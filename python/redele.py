@@ -168,6 +168,26 @@ def main():
         gooey_options={'full_width':True}
     )
     
+    remove_intro_group = subs.add_parser(
+        "remove-intro", prog="Remove Intro",
+    ).add_argument_group("")
+    remove_intro_group.add_argument(
+        "-s", 
+        "--source-folder",
+        metavar="Source Folder",
+        help="Folder with encrypted MKI files to process. The first file (CP01) will be removed.",
+        widget='DirChooser',
+        gooey_options={'full_width':True}
+    )
+    remove_intro_group.add_argument(
+        "-t", 
+        "--target-folder",
+        metavar="Target Folder",
+        help="Folder where the processed encrypted files will be stored (without CP01).",
+        widget='DirChooser',
+        gooey_options={'full_width':True}
+    )
+    
 
     args = parser.parse_args()
     
@@ -268,6 +288,113 @@ def main():
                 iterator += 1
 
         print(f"Processing complete.")
+    
+    if args.command=="remove-intro":
+        
+        # monkeypatch out exceptions on invalid ID3 headers
+        mutagen.id3._tags.ID3Header.__init__ = utils.id3header_constructor_monkeypatch
+        
+        count = 0
+        mki_files = {}
+        
+        # Find all MKI files organized by directory
+        for root, _, filenames in os.walk(args.source_folder):
+            for filename in filenames:
+                rel_path = Path(root).relative_to(args.source_folder)
+                if filename.lower().endswith(".mki"):
+                    mki_files.setdefault(str(rel_path), []).append(filename)
+                    count += 1
+
+        if count == 0:
+            print("No MKI files found in the source folder.")
+            sys.exit(1)
+
+        print(f"Found {count} MKI files to process.")
+        
+        iterator = 1
+        total_processed = 0
+        
+        for subdir in mki_files:
+            # Sort files to ensure CP01 is first
+            sorted_files = sorted(mki_files[subdir])
+            
+            # Skip CP01 (first file) and process the rest
+            files_to_process = []
+            cp01_found = False
+            
+            for file in sorted_files:
+                # Check if this is CP01 file
+                if "CP01" in file.upper():
+                    cp01_found = True
+                    print(f"Skipping intro file: {Path(subdir) / file}")
+                    continue
+                files_to_process.append(file)
+            
+            if not cp01_found:
+                print(f"Warning: No CP01 file found in {subdir}, processing all files.")
+                files_to_process = sorted_files
+            
+            if not files_to_process:
+                print(f"No files to process in {subdir} after removing intro.")
+                continue
+                
+            # Create target directory
+            target_subdir = Path(args.target_folder) / subdir
+            os.makedirs(target_subdir, exist_ok=True)
+            
+            # Process remaining files with renumbering
+            file_counter = 1
+            temp_dir = Path(args.target_folder) / "temp_processing"
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            try:
+                for file in files_to_process:
+                    print(f"=========================[{iterator}/{count}]")
+                    print(f"Processing {Path(subdir) / file}...")
+                    
+                    # Step 1: Decrypt the file
+                    source_file = str(Path(args.source_folder) / subdir / file)
+                    temp_mp3 = str(temp_dir / f"temp_{file_counter:02d}.mp3")
+                    
+                    decipher_file(source_file, temp_mp3)
+                    
+                    # Step 2: Update metadata with new file number
+                    new_filenum_str = f"{file_counter:02d}"
+                    
+                    # Extract figure ID from directory or filename
+                    figure_match = re.search(r'K(\d{4})', str(subdir))
+                    if figure_match:
+                        figure_id = figure_match.group(1)
+                    else:
+                        figure_id = "0000"
+                    
+                    new_title = f"K{figure_id}CP{new_filenum_str}"
+                    clear_and_set_title(temp_mp3, new_title)
+                    
+                    # Step 3: Re-encrypt the file
+                    encrypted_file = cipher_file(temp_mp3)
+                    
+                    # Step 4: Move to final location with correct name
+                    final_filename = f"CP{new_filenum_str}.MKI"
+                    final_path = target_subdir / final_filename
+                    shutil.move(encrypted_file, str(final_path))
+                    
+                    # Clean up temp file
+                    os.remove(temp_mp3)
+                    
+                    print(f"Created: {final_path}")
+                    
+                    iterator += 1
+                    file_counter += 1
+                    total_processed += 1
+                    
+            finally:
+                # Clean up temp directory
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+
+        print(f"Processing complete. Processed {total_processed} files with intro removed.")
+        print(f"Files saved to '{args.target_folder}'.")
 
 
 if __name__ == "__main__":

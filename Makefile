@@ -18,8 +18,9 @@ help:
 	@echo "Examples:"
 	@echo "  make run"
 	@echo "  make run ARGS='--help'"
-	@echo "  make run ARGS='encrypt /path/to/file.mp3'"
-	@echo "  make run ARGS='decrypt /path/to/file.mp3'"
+	@echo "  make run ARGS='encrypt /path/to/folder'"
+	@echo "  make run ARGS='decrypt /path/to/folder'"
+	@echo "  make run ARGS='remove-intro /path/to/folder'"
 
 # Run the redele.py script using the shell script
 run:
